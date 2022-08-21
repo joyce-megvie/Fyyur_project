@@ -2,7 +2,6 @@
 # Imports
 #----------------------------------------------------------------------------#
 import re
-from models import Artist, show, db_setup, Venue
 from datetime import datetime
 import json
 import dateutil.parser
@@ -23,8 +22,9 @@ from flask_migrate import Migrate
 app = Flask(__name__)
 moment = Moment(app)
 app.config.from_object('config')
-db = db_setup(app)
-
+db = SQLAlchemy(app)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:abc@localhost:5432/fyyurapp'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # TODO: connect to a local postgresql database
 migration = Migrate(app, db)
 #----------------------------------------------------------------------------#
@@ -74,11 +74,11 @@ class Artist(db.Model):
     shows = db.relationship('Show', backref='artist', lazy=True, cascade='save-update, delete, merge')
 
 # TODO Implement Show and Artist models, and complete all model relationships and properties, as a database migration.
-class Show(db.model):
+class Show(db.Model):
   __tablename__ = 'shows'
   id = db.Column(db.Integer, primary_key = True)
-  begin_time = db.Column(db.Datetime)
-  venue_id = db.Column(db.Integer, db.ForegnKey('Venue.id'))
+  begin_time = db.Column(db.DateTime)
+  venue_id = db.Column(db.Integer, db.ForeignKey('Venue.id'))
   artist_id = db.Column(db.Integer, db.ForeignKey('Artist.id'))
   upcoming = db.Column(db.Boolean)
 #----------------------------------------------------------------------------#
@@ -157,10 +157,9 @@ def show_venue(venue_id):
   past_shows = []
   upcoming_shows = []
   shows = venue.shows
-  data = []
   for show in shows:
     show_data = {
-      'artist_id': show.artist.id,
+      'artist_id': show.artist_id,
       'artist_name' : show.artist.name,
       'artist_image_link': show.artist.image_link,
       'begin_time': str(show.begin_time),
@@ -169,7 +168,7 @@ def show_venue(venue_id):
       upcoming_shows.append(show_data)
     else:
       past_shows.append(show_data)
-  data1={
+  data = {
     "id": venue.id,
     "name": venue.name,
     "genres": venue.genres.split(','),
@@ -286,7 +285,6 @@ def show_artist(artist_id):
   shows = artist.shows
   upcoming_shows = []
   past_shows = []
-  data = []
   for show in shows:
       show_data = {
         'venue_id': show.venue.id,
@@ -493,13 +491,40 @@ def create_shows():
 def create_show_submission():
   # called to create new shows in the db, upon submitting new show listing form
   # TODO: insert form data as a new Show record in the db, instead
-  new
+  new_show = Show()
+  new_show.artist_id = request.form['artist_id']
+  new_show.venue_id = request.form['venue_id']
+  dateAndTime = request.form['begin_time'].split(' ')
+  DTList = dateAndTime[0].split('-')
+  DTList += dateAndTime[1].split(':')
+  for i in range(len(DTList)):
+    DTList[i] = int(DTList[i])
+  new_show.begin_time = datetime(DTList[0],DTList[1],DTList[2],DTList[3],DTList[4],DTList[5])
+  present = datetime.now()
+  new_show.upcoming = (present < new_show.begin_time)
+
+  try:
+    db.session.add(new_show)
+    updated_artist = Artist.query.get(new_show.artist_id)
+    updated_venue = Venue.query.get(new_show.venue_id)
+    if(new_show.upcoming):
+      updated_artist.upcoming_shows_count += 1;
+      updated_venue.upcoming_shows_count += 1;
+    else:
+      updated_artist.past_shows_count += 1;
+      updated_venue.past_shows_count += 1;
   # on successful db insert, flash success
-  flash('Show was successfully listed!')
+    db.session.commit()
+    flash('Show was successfully listed!')
   # TODO: on unsuccessful db insert, flash an error instead.
+  except:
+    db.session.rollback()
+    flash('Could not list Show. check ids again')
+  finally:
+    db.session.close()
   # e.g., flash('An error occurred. Show could not be listed.')
   # see: http://flask.pocoo.org/docs/1.0/patterns/flashing/
-  return render_template('pages/home.html')
+  return redirect(url_for('index'))
 
 @app.errorhandler(404)
 def not_found_error(error):
